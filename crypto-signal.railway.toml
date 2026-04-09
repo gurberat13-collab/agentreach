@@ -3,5 +3,5 @@
 # Gerekirse Railway UI > Service > Settings > Start Command ile ayni komutu yapistirabilirsin.
 
 [deploy]
-startCommand = "python3 -m pip install --no-cache-dir -r requirements-crypto-worker.txt && mkdir -p .data && AGENT_REACH_DATA_DIR=.data python3 scripts/crypto_signal.py watchlist --preset scalping --interval 5m --mtf --smart-telegram --watch --every 120"
+startCommand = "mkdir -p .data && AGENT_REACH_DATA_DIR=.data python3 scripts/crypto_signal.py watchlist --preset scalping --interval 5m --mtf --smart-telegram --watch --every 120"
 restartPolicyType = "ON_FAILURE"
