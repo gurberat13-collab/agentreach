@@ -42,7 +42,8 @@ Railway (https://railway.com/):
   Repoyu bagla; Variables: TELEGRAM_*, istege AGENT_REACH_*.
   Start Command: pip install -r requirements-crypto-worker.txt && python scripts/crypto_signal.py
     watchlist --preset scalping --interval 5m --mtf --smart-telegram --watch --every 120
-  Sablon: crypto-signal.railway.toml dosyasini railway.toml yap veya komutu UI’dan yapistir.
+  Start: repo kokunde railpack.json (deploy.startCommand) — Railway Railpack bunu okur.
+  Alternatif: Service Settings > Start Command veya crypto-signal.railway.toml satiri.
   Kalici state icin Volume + AGENT_REACH_DATA_DIR=/data (yoksa redeploy’da state sifirlanir).
 
 Onemli: Hicbir cikti yatirim tavsiyesi degildir. Karar size aittir.

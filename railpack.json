@@ -1,0 +1,6 @@
+{
+  "$schema": "https://schema.railpack.com",
+  "deploy": {
+    "startCommand": "pip install --no-cache-dir -r requirements-crypto-worker.txt && python scripts/crypto_signal.py watchlist --preset scalping --interval 5m --mtf --smart-telegram --watch --every 120"
+  }
+}
