@@ -1454,6 +1454,13 @@ def run_telegram_command_loop(console: Console) -> None:
         console.print("[red]TELEGRAM_BOT_TOKEN gerekli[/red]")
         return
     offset = 0
+    help_text = (
+        "Komutlar:\n"
+        "/signal BTCUSDT - tek coin ozet\n"
+        "/watch hybrid - hazir sepet ozet\n"
+        "/watch macro - makro sepet\n"
+        "/stop - bot dongusunu durdur"
+    )
     console.print("[green]Telegram komut dinleyici[/green] — /signal BTCUSDT, /watch hybrid, /stop")
     while True:
         try:
@@ -1474,13 +1481,17 @@ def run_telegram_command_loop(console: Console) -> None:
                 parts = text.split()
                 cmd = parts[0].split("@")[0].lower()
                 reply = ""
-                if cmd == "/signal" and len(parts) >= 2:
+                if cmd in ("/start", "/help"):
+                    reply = help_text
+                elif cmd == "/signal" and len(parts) >= 2:
                     coin = parts[1].upper()
                     try:
                         pack = analyze_mtf(coin, "15m")
                         reply = f"{coin} guven {pack['confidence']} MTF {pack['mtf']['label']} {pack['signal']['direction']}"
                     except Exception as e:
                         reply = f"Hata: {e}"
+                elif cmd == "/signal":
+                    reply = "Kullanim: /signal BTCUSDT"
                 elif cmd == "/watch" and len(parts) >= 2:
                     preset = parts[1].lower()
                     if preset in _WATCHLIST_PRESETS:
@@ -1495,10 +1506,12 @@ def run_telegram_command_loop(console: Console) -> None:
                         reply = " | ".join(bits)
                     else:
                         reply = "Preset yok: macro hybrid scalping"
+                elif cmd == "/watch":
+                    reply = "Kullanim: /watch hybrid"
                 elif cmd in ("/stop", "/quit"):
                     return
                 else:
-                    reply = "Komutlar: /signal BTCUSDT | /watch hybrid | /stop"
+                    reply = help_text
                 if chat and reply:
                     requests.post(
                         f"https://api.telegram.org/bot{token}/sendMessage",
