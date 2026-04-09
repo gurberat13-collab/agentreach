@@ -32,10 +32,18 @@ Ortam:
   AGENT_REACH_SMART_TELEGRAM=1 — watchlist'te --smart-telegram ile ayni etki
   AGENT_REACH_ALERT_MIN_CONF — akilli alarm icin minimum guven (varsayilan 55)
   AGENT_REACH_ACCOUNT_USDT, AGENT_REACH_RISK_PCT — islem plani pozisyon boyutu
-  AGENT_REACH_RELAY_WEBHOOK_URL — Relay.app Incoming Webhook URL; JSON POST
-  AGENT_REACH_RELAY_DEDUP=1 — payload’a relayDeduplicationKey ekler (varsayilan acik)
-  AGENT_REACH_TELEGRAM_VIA_RELAY=1 — Telegram’i Python’dan gonderme; sadece Relay webhook
-      (Relay workflow: Webhook -> Telegram). Cift mesaj olmaz.
+  AGENT_REACH_WEBHOOK_URL — harici otomasyon webhook (n8n, Make, Zapier, kendi API’n…); JSON POST
+      (Eski isim: AGENT_REACH_RELAY_WEBHOOK_URL — hala calisir.)
+  AGENT_REACH_WEBHOOK_DEDUP=1 — deduplication anahtari ekler (varsayilan acik)
+  AGENT_REACH_TELEGRAM_VIA_WEBHOOK=1 — Telegram’i script’ten gonderme; webhook zincirinde gonder
+      (Eski isim: AGENT_REACH_TELEGRAM_VIA_RELAY)
+
+Railway (https://railway.com/):
+  Repoyu bagla; Variables: TELEGRAM_*, istege AGENT_REACH_*.
+  Start Command: pip install -r requirements-crypto-worker.txt && python scripts/crypto_signal.py
+    watchlist --preset scalping --interval 5m --mtf --smart-telegram --watch --every 120
+  Sablon: crypto-signal.railway.toml dosyasini railway.toml yap veya komutu UI’dan yapistir.
+  Kalici state icin Volume + AGENT_REACH_DATA_DIR=/data (yoksa redeploy’da state sifirlanir).
 
 Onemli: Hicbir cikti yatirim tavsiyesi degildir. Karar size aittir.
 """
@@ -1175,65 +1183,86 @@ def render_watchlist(console: Console, results: list[tuple[str, dict[str, Any]]]
 
 
 def _telegram_direct_from_script() -> bool:
-    """False ise bildirim sadece Relay’e gider; Telegram Relay workflow’da gonderilir."""
-    return (os.environ.get("AGENT_REACH_TELEGRAM_VIA_RELAY", "").lower() not in ("1", "true", "yes"))
+    """False ise Telegram API script icinde cagrilmaz; webhook zinciri (or. n8n -> Telegram) kullanilir."""
+    v = (
+        os.environ.get("AGENT_REACH_TELEGRAM_VIA_WEBHOOK")
+        or os.environ.get("AGENT_REACH_TELEGRAM_VIA_RELAY")
+        or ""
+    )
+    return v.lower() not in ("1", "true", "yes")
 
 
-def post_relay_if_configured(payload: dict[str, Any]) -> None:
-    """Relay.app / benzeri: Incoming Webhook URL'ye JSON POST (Telegram ile birlikte veya ayri)."""
-    url = (os.environ.get("AGENT_REACH_RELAY_WEBHOOK_URL") or "").strip()
+def _outbound_webhook_url() -> str:
+    return (
+        (os.environ.get("AGENT_REACH_WEBHOOK_URL") or "").strip()
+        or (os.environ.get("AGENT_REACH_RELAY_WEBHOOK_URL") or "").strip()
+    )
+
+
+def post_webhook_if_configured(payload: dict[str, Any]) -> None:
+    """Harici otomasyon webhook’una JSON POST (n8n, Make, Zapier, vb.)."""
+    url = _outbound_webhook_url()
     if not url:
         return
     body: dict[str, Any] = {
         "source": "agent-reach-crypto-signal",
         **payload,
     }
-    dedup = (os.environ.get("AGENT_REACH_RELAY_DEDUP", "1") or "1").lower() not in (
-        "0",
-        "false",
-        "no",
-    )
-    if dedup and "relayDeduplicationKey" not in body:
+    dedup_raw = os.environ.get("AGENT_REACH_WEBHOOK_DEDUP") or os.environ.get("AGENT_REACH_RELAY_DEDUP", "1")
+    dedup = (dedup_raw or "1").lower() not in ("0", "false", "no")
+    if dedup and "deduplicationKey" not in body and "relayDeduplicationKey" not in body:
         sym = str(payload.get("symbol") or "")
         if payload.get("kind") == "classic":
             sig = payload.get("signal") or {}
             d = str(sig.get("direction") or "")
             sc = float(sig.get("score") or 0)
-            body["relayDeduplicationKey"] = f"{sym}-{d}-{sc:.2f}"
+            key = f"{sym}-{d}-{sc:.2f}"
         else:
             pack = payload.get("pack") or {}
             sig = pack.get("signal") or {}
             conf = int(pack.get("confidence") or 0)
             d = str(sig.get("direction") or "")
-            body["relayDeduplicationKey"] = f"{sym}-{d}-{conf}"
+            key = f"{sym}-{d}-{conf}"
+        body["deduplicationKey"] = key
+        body["relayDeduplicationKey"] = key
     try:
         requests.post(url, json=body, timeout=15)
     except OSError:
         pass
 
 
+# Geriye donuk isim
+post_relay_if_configured = post_webhook_if_configured
+
+
 def notify_telegram_signal(symbol: str, sig: dict[str, Any], interval: str) -> None:
     if abs(sig["score"]) < 4:
         return
+    d = sig["direction"]
+    arrow = "+" if d == "LONG" else "-" if d == "SHORT" else "="
+    lines = [
+        f"{arrow} {display_name(symbol)} | {d} {sig['strength']}",
+        f"Skor: {sig['score']:+.1f}  |  Fiyat: {_fmt_price(sig['price'])}",
+        f"RSI: {sig['rsi']}  |  Hacim: {sig['volume_ratio']}x",
+        f"24h: {sig['change_24h']:+.1f}%",
+        "",
+    ]
+    for r in sig["reasons"][:8]:
+        lines.append(f"  - {r}")
+    text = "\n".join(lines)[:4000]
     token = os.environ.get("TELEGRAM_BOT_TOKEN")
     chat = os.environ.get("TELEGRAM_CHAT_ID")
-    if token and chat:
-        d = sig["direction"]
-        arrow = "+" if d == "LONG" else "-" if d == "SHORT" else "="
-        lines = [
-            f"{arrow} {display_name(symbol)} | {d} {sig['strength']}",
-            f"Skor: {sig['score']:+.1f}  |  Fiyat: {_fmt_price(sig['price'])}",
-            f"RSI: {sig['rsi']}  |  Hacim: {sig['volume_ratio']}x",
-            f"24h: {sig['change_24h']:+.1f}%",
-            "",
-        ]
-        for r in sig["reasons"][:8]:
-            lines.append(f"  - {r}")
-        text = "\n".join(lines)[:4000]
+    if _telegram_direct_from_script() and token and chat:
         url = f"https://api.telegram.org/bot{token}/sendMessage"
         requests.post(url, json={"chat_id": chat, "text": text}, timeout=15)
-    post_relay_if_configured(
-        {"symbol": symbol, "interval": interval, "kind": "classic", "signal": sig},
+    post_webhook_if_configured(
+        {
+            "symbol": symbol,
+            "interval": interval,
+            "kind": "classic",
+            "signal": sig,
+            "telegram_text": text,
+        },
     )
 
 
@@ -1308,31 +1337,32 @@ def render_watchlist_mtf(
 
 
 def notify_telegram_smart_pack(symbol: str, pack: dict[str, Any], interval: str) -> None:
-    token = os.environ.get("TELEGRAM_BOT_TOKEN")
-    chat = os.environ.get("TELEGRAM_CHAT_ID")
     sig = pack.get("signal") or {}
     mtf = pack.get("mtf") or {}
     conf = int(pack.get("confidence") or 0)
-    if token and chat:
-        lines = [
-            f"*{display_name(symbol)}* MTF | {interval} | guven {conf}/100",
-            f"Yon: {sig.get('direction')}  skor: {sig.get('score'):+.1f}",
-            f"MTF: {mtf.get('label')} — 15m {mtf.get('15m', {}).get('direction')}  1h {mtf.get('60m', {}).get('direction')}",
-        ]
-        plan = pack.get("trade_plan") or {}
-        if plan.get("available"):
-            lines.append(
-                f"Plan: SL {_fmt_price(plan.get('sl'))} TP1 {_fmt_price(plan.get('tp1'))} R:R {plan.get('rr_tp1')}"
-            )
-        text = "\n".join(lines)[:4000]
+    lines = [
+        f"*{display_name(symbol)}* MTF | {interval} | guven {conf}/100",
+        f"Yon: {sig.get('direction')}  skor: {sig.get('score'):+.1f}",
+        f"MTF: {mtf.get('label')} — 15m {mtf.get('15m', {}).get('direction')}  1h {mtf.get('60m', {}).get('direction')}",
+    ]
+    plan = pack.get("trade_plan") or {}
+    if plan.get("available"):
+        lines.append(
+            f"Plan: SL {_fmt_price(plan.get('sl'))} TP1 {_fmt_price(plan.get('tp1'))} R:R {plan.get('rr_tp1')}"
+        )
+    text = "\n".join(lines)[:4000]
+    token = os.environ.get("TELEGRAM_BOT_TOKEN")
+    chat = os.environ.get("TELEGRAM_CHAT_ID")
+    if _telegram_direct_from_script() and token and chat:
         url = f"https://api.telegram.org/bot{token}/sendMessage"
         requests.post(url, json={"chat_id": chat, "text": text}, timeout=15)
-    post_relay_if_configured(
+    post_webhook_if_configured(
         {
             "symbol": symbol,
             "interval": interval,
             "kind": "mtf_pack",
             "pack": pack,
+            "telegram_text": text,
         },
     )
 

@@ -1,0 +1,11 @@
+# Railway (https://railway.com/) — crypto_signal izleme worker ornegi.
+# Kurulum: Yeni proje > Deploy from GitHub > bu repoyu sec.
+# Servis ayarlari: Root Directory bos / repo kok.
+# Bu dosyayi "railway.toml" olarak kopyalayabilir veya asagidaki startCommand'i UI'a yapistirabilirsin.
+
+[build]
+builder = "nixpacks"
+
+[deploy]
+startCommand = "pip install --no-cache-dir -r requirements-crypto-worker.txt && python scripts/crypto_signal.py watchlist --preset scalping --interval 5m --mtf --smart-telegram --watch --every 120"
+restartPolicyType = "ON_FAILURE"
