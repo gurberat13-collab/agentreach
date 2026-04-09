@@ -1,0 +1,4 @@
+# Crypto worker: Railpack yerine Docker ile kurulum (requests imajda kurulu).
+[build]
+builder = "DOCKERFILE"
+dockerfilePath = "Dockerfile.crypto-worker"

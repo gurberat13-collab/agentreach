@@ -1,0 +1,16 @@
+# Crypto signal worker — bağımlılıklar imajda (Railway'de requests/rich garanti).
+# Railway: Build → Docker → Dockerfile path: Dockerfile.crypto-worker
+# veya repo kökündeki railway.toml bunu seçer.
+FROM python:3.12-slim
+
+WORKDIR /app
+
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+
+COPY scripts/crypto_signal.py scripts/crypto_signal.py
+
+ENV PYTHONUNBUFFERED=1
+
+# TELEGRAM_*, AGENT_REACH_* Railway Variables ile gelir
+CMD ["sh", "-c", "mkdir -p .data && export AGENT_REACH_DATA_DIR=\"${AGENT_REACH_DATA_DIR:-.data}\" && exec python scripts/crypto_signal.py watchlist --preset scalping --interval 5m --mtf --smart-telegram --watch --every 120"]
