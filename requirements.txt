@@ -1,0 +1,4 @@
+# Railway/Railpack: kök requirements.txt ile build sırasında pip genelde burayı yükler.
+# crypto_signal worker ile aynı (requirements-crypto-worker.txt ile senkron tut).
+requests>=2.28
+rich>=13

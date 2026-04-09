@@ -1,6 +1,6 @@
 {
   "$schema": "https://schema.railpack.com",
   "deploy": {
-    "startCommand": "mkdir -p .data && AGENT_REACH_DATA_DIR=.data python3 scripts/crypto_signal.py watchlist --preset scalping --interval 5m --mtf --smart-telegram --watch --every 120"
+    "startCommand": "python3 -m pip install --no-cache-dir -r requirements.txt && mkdir -p .data && AGENT_REACH_DATA_DIR=.data python3 scripts/crypto_signal.py watchlist --preset scalping --interval 5m --mtf --smart-telegram --watch --every 120"
   }
 }
