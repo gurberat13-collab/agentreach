@@ -145,6 +145,9 @@ _FLOW_STATE_FILE = "agent_reach_flow_holdvol.json"
 _SIGNAL_LOG_FILE = "agent_reach_signal_log.jsonl"
 _PAPER_TRADES_FILE = "agent_reach_paper_trades.json"
 _NEWS_BOOST_FILE = "agent_reach_news_boost.json"
+_TELEGRAM_CHAT_ID_CACHE: str | None = None
+_TELEGRAM_CHAT_ID_LOOKUP_DONE = False
+_TELEGRAM_CHAT_ID_NOTICE_SHOWN = False
 
 # Spot baz -> sektor (rotasyon ozeti icin)
 _SECTOR_BY_BASE: dict[str, str] = {
@@ -1209,6 +1212,72 @@ def _outbound_webhook_url() -> str:
     )
 
 
+def _warn_telegram_chat_id(message: str) -> None:
+    global _TELEGRAM_CHAT_ID_NOTICE_SHOWN
+    if _TELEGRAM_CHAT_ID_NOTICE_SHOWN:
+        return
+    print(message, file=sys.stderr)
+    _TELEGRAM_CHAT_ID_NOTICE_SHOWN = True
+
+
+def _resolve_telegram_chat_id(token: str | None) -> str | None:
+    global _TELEGRAM_CHAT_ID_CACHE, _TELEGRAM_CHAT_ID_LOOKUP_DONE
+    chat = (os.environ.get("TELEGRAM_CHAT_ID") or "").strip()
+    if chat:
+        _TELEGRAM_CHAT_ID_CACHE = chat
+        return chat
+    if _TELEGRAM_CHAT_ID_CACHE:
+        return _TELEGRAM_CHAT_ID_CACHE
+    if _TELEGRAM_CHAT_ID_LOOKUP_DONE or not token:
+        return None
+
+    _TELEGRAM_CHAT_ID_LOOKUP_DONE = True
+    try:
+        resp = requests.get(
+            f"https://api.telegram.org/bot{token}/getUpdates",
+            params={"timeout": 0, "limit": 100},
+            timeout=15,
+        )
+        resp.raise_for_status()
+        payload = resp.json()
+    except Exception:
+        _warn_telegram_chat_id(
+            "Telegram: TELEGRAM_CHAT_ID eksik. Bota bir mesaj gonderip tekrar deneyin ya da TELEGRAM_CHAT_ID ayarlayin."
+        )
+        return None
+
+    chats: dict[str, str] = {}
+    for update in payload.get("result", []):
+        for key in ("message", "edited_message", "channel_post", "edited_channel_post"):
+            msg = update.get(key) or {}
+            chat_info = msg.get("chat") or {}
+            chat_id = chat_info.get("id")
+            if chat_id is None:
+                continue
+            label = (
+                chat_info.get("title")
+                or chat_info.get("username")
+                or chat_info.get("first_name")
+                or str(chat_id)
+            )
+            chats[str(chat_id)] = str(label)
+
+    if len(chats) == 1:
+        _TELEGRAM_CHAT_ID_CACHE = next(iter(chats))
+        return _TELEGRAM_CHAT_ID_CACHE
+    if len(chats) > 1:
+        known = ", ".join(sorted(chats.values())[:3])
+        _warn_telegram_chat_id(
+            f"Telegram: birden fazla chat bulundu ({known}). Yanlis hedefe gondermemek icin TELEGRAM_CHAT_ID ayarlayin."
+        )
+        return None
+
+    _warn_telegram_chat_id(
+        "Telegram: TELEGRAM_CHAT_ID eksik. Bota bir mesaj gonderip tekrar deneyin ya da TELEGRAM_CHAT_ID ayarlayin."
+    )
+    return None
+
+
 def post_webhook_if_configured(payload: dict[str, Any]) -> None:
     """Harici otomasyon webhook’una JSON POST (n8n, Make, Zapier, vb.)."""
     url = _outbound_webhook_url()
@@ -1260,9 +1329,10 @@ def notify_telegram_signal(symbol: str, sig: dict[str, Any], interval: str) -> N
     for r in sig["reasons"][:8]:
         lines.append(f"  - {r}")
     text = "\n".join(lines)[:4000]
+    direct = _telegram_direct_from_script()
     token = os.environ.get("TELEGRAM_BOT_TOKEN")
-    chat = os.environ.get("TELEGRAM_CHAT_ID")
-    if _telegram_direct_from_script() and token and chat:
+    chat = _resolve_telegram_chat_id(token) if direct else None
+    if direct and token and chat:
         url = f"https://api.telegram.org/bot{token}/sendMessage"
         requests.post(url, json={"chat_id": chat, "text": text}, timeout=15)
     post_webhook_if_configured(
@@ -1361,9 +1431,10 @@ def notify_telegram_smart_pack(symbol: str, pack: dict[str, Any], interval: str)
             f"Plan: SL {_fmt_price(plan.get('sl'))} TP1 {_fmt_price(plan.get('tp1'))} R:R {plan.get('rr_tp1')}"
         )
     text = "\n".join(lines)[:4000]
+    direct = _telegram_direct_from_script()
     token = os.environ.get("TELEGRAM_BOT_TOKEN")
-    chat = os.environ.get("TELEGRAM_CHAT_ID")
-    if _telegram_direct_from_script() and token and chat:
+    chat = _resolve_telegram_chat_id(token) if direct else None
+    if direct and token and chat:
         url = f"https://api.telegram.org/bot{token}/sendMessage"
         requests.post(url, json={"chat_id": chat, "text": text}, timeout=15)
     post_webhook_if_configured(
@@ -1456,7 +1527,8 @@ def main() -> None:
         description="Teknik sinyal — MEXC Spot + MEXC Futures (+ opsiyonel Yahoo)",
         epilog=(
             "MTF: --mtf (5m/15m/1h teyit + funding/holdVol + guven + plan) | "
-            "Telegram: TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID, AGENT_REACH_ALERT_MIN_CONF | "
+            "Telegram: TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID (opsiyonel; tek chat ise otomatik bulunur), "
+            "AGENT_REACH_ALERT_MIN_CONF | "
             "Veri: AGENT_REACH_DATA_DIR | "
             "Haber boost: agent_reach_news_boost.json"
         ),

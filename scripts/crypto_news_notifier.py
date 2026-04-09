@@ -55,6 +55,9 @@ from rich.table import Table
 _APP_DIR = Path(os.environ.get("LOCALAPPDATA", Path.home()))
 _DEFAULT_STATE = _APP_DIR / "agent_reach_crypto_notifier_state.json"
 _DEFAULT_TRADE_LOG = _APP_DIR / "agent_reach_crypto_trades.json"
+_TELEGRAM_CHAT_ID_CACHE: str | None = None
+_TELEGRAM_CHAT_ID_LOOKUP_DONE = False
+_TELEGRAM_CHAT_ID_NOTICE_SHOWN = False
 
 # ---------------------------------------------------------------------------
 # RSS kaynakları
@@ -504,9 +507,75 @@ def notify_console(
         console.print("[dim]Eşik üstü haber yok.[/dim]")
 
 
+def _warn_telegram_chat_id(message: str) -> None:
+    global _TELEGRAM_CHAT_ID_NOTICE_SHOWN
+    if _TELEGRAM_CHAT_ID_NOTICE_SHOWN:
+        return
+    logger.warning(message)
+    _TELEGRAM_CHAT_ID_NOTICE_SHOWN = True
+
+
+def _resolve_telegram_chat_id(token: str | None) -> str | None:
+    global _TELEGRAM_CHAT_ID_CACHE, _TELEGRAM_CHAT_ID_LOOKUP_DONE
+    chat = (os.environ.get("TELEGRAM_CHAT_ID") or "").strip()
+    if chat:
+        _TELEGRAM_CHAT_ID_CACHE = chat
+        return chat
+    if _TELEGRAM_CHAT_ID_CACHE:
+        return _TELEGRAM_CHAT_ID_CACHE
+    if _TELEGRAM_CHAT_ID_LOOKUP_DONE or not token:
+        return None
+
+    _TELEGRAM_CHAT_ID_LOOKUP_DONE = True
+    try:
+        resp = requests.get(
+            f"https://api.telegram.org/bot{token}/getUpdates",
+            params={"timeout": 0, "limit": 100},
+            timeout=15,
+        )
+        resp.raise_for_status()
+        payload = resp.json()
+    except Exception:
+        _warn_telegram_chat_id(
+            "Telegram: TELEGRAM_CHAT_ID eksik. Bota bir mesaj gonderip tekrar deneyin ya da TELEGRAM_CHAT_ID ayarlayin."
+        )
+        return None
+
+    chats: dict[str, str] = {}
+    for update in payload.get("result", []):
+        for key in ("message", "edited_message", "channel_post", "edited_channel_post"):
+            msg = update.get(key) or {}
+            chat_info = msg.get("chat") or {}
+            chat_id = chat_info.get("id")
+            if chat_id is None:
+                continue
+            label = (
+                chat_info.get("title")
+                or chat_info.get("username")
+                or chat_info.get("first_name")
+                or str(chat_id)
+            )
+            chats[str(chat_id)] = str(label)
+
+    if len(chats) == 1:
+        _TELEGRAM_CHAT_ID_CACHE = next(iter(chats))
+        return _TELEGRAM_CHAT_ID_CACHE
+    if len(chats) > 1:
+        known = ", ".join(sorted(chats.values())[:3])
+        _warn_telegram_chat_id(
+            f"Telegram: birden fazla chat bulundu ({known}). Yanlis hedefe gondermemek icin TELEGRAM_CHAT_ID ayarlayin."
+        )
+        return None
+
+    _warn_telegram_chat_id(
+        "Telegram: TELEGRAM_CHAT_ID eksik. Bota bir mesaj gonderip tekrar deneyin ya da TELEGRAM_CHAT_ID ayarlayin."
+    )
+    return None
+
+
 def notify_telegram(items: list[dict[str, Any]], alert_min: int, high_only: bool) -> None:
     token = os.environ.get("TELEGRAM_BOT_TOKEN")
-    chat = os.environ.get("TELEGRAM_CHAT_ID")
+    chat = _resolve_telegram_chat_id(token)
     if not token or not chat:
         return
     to_send = [it for it in items if it["impact_score"] >= alert_min] if high_only else items
