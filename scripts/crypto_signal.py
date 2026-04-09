@@ -124,7 +124,16 @@ _DEFAULT_SCALPING_TOP_ALTS = 5
 
 # Kalici durum / log (repo kokune veya cwd'ye)
 def _data_dir() -> Path:
-    return Path(os.environ.get("AGENT_REACH_DATA_DIR", Path.cwd())).resolve()
+    raw = (os.environ.get("AGENT_REACH_DATA_DIR") or "").strip()
+    if not raw:
+        return Path.cwd().resolve()
+    p = Path(raw).expanduser().resolve()
+    try:
+        p.mkdir(parents=True, exist_ok=True)
+    except OSError:
+        # Railway: /data volume yoksa veya izin yoksa cwd kullan (cokme onleme)
+        return Path.cwd().resolve()
+    return p
 
 
 def _data_path(name: str) -> Path:
