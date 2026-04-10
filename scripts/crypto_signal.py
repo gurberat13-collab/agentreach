@@ -1448,35 +1448,87 @@ def notify_telegram_smart_pack(symbol: str, pack: dict[str, Any], interval: str)
     )
 
 
+def _telegram_api_json(url: str, *, method: str = "GET", json_body: dict | None = None, timeout: float = 20) -> dict[str, Any]:
+    if method == "POST" and json_body is not None:
+        r = requests.post(url, json=json_body, timeout=timeout)
+    else:
+        r = requests.get(url, timeout=timeout)
+    r.raise_for_status()
+    return r.json()
+
+
 def run_telegram_command_loop(console: Console) -> None:
     token = os.environ.get("TELEGRAM_BOT_TOKEN")
     if not token:
         console.print("[red]TELEGRAM_BOT_TOKEN gerekli[/red]")
         return
+
+    # Webhook aciksa getUpdates bos doner — polling hic cevap gormez
+    base = f"https://api.telegram.org/bot{token}"
+    try:
+        wh = _telegram_api_json(f"{base}/getWebhookInfo", timeout=15)
+        if wh.get("ok") and wh.get("result", {}).get("url"):
+            console.print(
+                "[yellow]Webhook aktif — polling icin kapatiliyor...[/yellow] "
+                + str(wh["result"].get("url", ""))[:80]
+            )
+        dw = _telegram_api_json(f"{base}/deleteWebhook", method="POST", json_body={"drop_pending_updates": True}, timeout=15)
+        if not dw.get("ok"):
+            console.print(f"[yellow]deleteWebhook: {dw.get('description', dw)}[/yellow]")
+    except Exception as e:
+        console.print(f"[yellow]Webhook temizligi atlandi: {e}[/yellow]")
+
+    try:
+        me = _telegram_api_json(f"{base}/getMe", timeout=15)
+        if not me.get("ok"):
+            console.print(f"[red]Token gecersiz: {me.get('description', me)}[/red]")
+            return
+        un = me.get("result", {}).get("username") or "?"
+        console.print(f"[green]Baglandi:[/green] @{un} — Telegram'da bu bota yazin (ozel sohbet).")
+    except Exception as e:
+        console.print(f"[red]getMe basarisiz (token/ag): {e}[/red]")
+        return
+
     offset = 0
     help_text = (
-        "Komutlar:\n"
+        "Komutlar (slash sart; /start veya start yazabilirsiniz):\n"
         "/signal BTCUSDT - tek coin ozet\n"
         "/watch hybrid - hazir sepet ozet\n"
         "/watch macro - makro sepet\n"
         "/stop - bot dongusunu durdur"
     )
-    console.print("[green]Telegram komut dinleyici[/green] — /signal BTCUSDT, /watch hybrid, /stop")
+    console.print(
+        "[dim]Ayni botta baska bir sunucu/Railway + bu script birlikte calisiyorsa "
+        "sadece biri guncelleme alir. Ctrl+C ile cikis.[/dim]"
+    )
+    console.print("[green]Polling basladi[/green] — /start, /signal BTCUSDT, /watch hybrid, /stop")
     while True:
         try:
             r = requests.get(
-                f"https://api.telegram.org/bot{token}/getUpdates",
-                params={"timeout": 25, "offset": offset},
+                f"{base}/getUpdates",
+                params={
+                    "timeout": 25,
+                    "offset": offset,
+                    "allowed_updates": json.dumps(["message", "edited_message"]),
+                },
                 timeout=30,
             )
             r.raise_for_status()
             data = r.json()
+            if not data.get("ok"):
+                console.print(f"[red]getUpdates: {data.get('description', data)}[/red]")
+                time.sleep(3)
+                continue
             for u in data.get("result", []):
                 offset = u["update_id"] + 1
-                msg = u.get("message") or {}
+                msg = u.get("message") or u.get("edited_message") or {}
                 chat = msg.get("chat", {}).get("id")
                 text = (msg.get("text") or "").strip()
-                if not text.startswith("/"):
+                # Telegram'da komutlar / ile baslar; bircok kullanici "start" yazar — kabul et
+                tl = text.lower()
+                if tl in ("start", "help", "yardım", "yardim", "basla", "başla"):
+                    text = "/start"
+                elif not text.startswith("/"):
                     continue
                 parts = text.split()
                 cmd = parts[0].split("@")[0].lower()
@@ -1513,11 +1565,17 @@ def run_telegram_command_loop(console: Console) -> None:
                 else:
                     reply = help_text
                 if chat and reply:
-                    requests.post(
-                        f"https://api.telegram.org/bot{token}/sendMessage",
-                        json={"chat_id": chat, "text": reply[:4000]},
-                        timeout=15,
-                    )
+                    try:
+                        sm = _telegram_api_json(
+                            f"{base}/sendMessage",
+                            method="POST",
+                            json_body={"chat_id": chat, "text": reply[:4000]},
+                            timeout=15,
+                        )
+                        if not sm.get("ok"):
+                            console.print(f"[red]sendMessage: {sm.get('description', sm)}[/red]")
+                    except Exception as ex:
+                        console.print(f"[red]sendMessage HTTP: {ex}[/red]")
         except KeyboardInterrupt:
             return
         except Exception as e:
