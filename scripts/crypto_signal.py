@@ -1502,34 +1502,43 @@ def run_telegram_command_loop(console: Console) -> None:
         "sadece biri guncelleme alir. Ctrl+C ile cikis.[/dim]"
     )
     console.print("[green]Polling basladi[/green] — /start, /signal BTCUSDT, /watch hybrid, /stop")
+    console.print("[dim]Not: 'start' yazarsaniz otomatik '/start' olarak kabul edilir.[/dim]")
     while True:
         try:
+            # allowed_updates kullanma — bazi ortamlarda guncelleme gelmeyebilir
             r = requests.get(
                 f"{base}/getUpdates",
-                params={
-                    "timeout": 25,
-                    "offset": offset,
-                    "allowed_updates": json.dumps(["message", "edited_message"]),
-                },
-                timeout=30,
+                params={"timeout": 25, "offset": offset},
+                timeout=35,
             )
-            r.raise_for_status()
+            if r.status_code == 409:
+                console.print(
+                    "[red]HTTP 409: Ayni bot baska yerde getUpdates ile dinleniyor — birini durdurun.[/red]"
+                )
+                time.sleep(5)
+                continue
             data = r.json()
             if not data.get("ok"):
                 console.print(f"[red]getUpdates: {data.get('description', data)}[/red]")
-                time.sleep(3)
+                time.sleep(3 if data.get("error_code") != 409 else 5)
                 continue
             for u in data.get("result", []):
                 offset = u["update_id"] + 1
                 msg = u.get("message") or u.get("edited_message") or {}
                 chat = msg.get("chat", {}).get("id")
+                chat_type = (msg.get("chat") or {}).get("type", "")
                 text = (msg.get("text") or "").strip()
+                text = text.replace("\u200b", "").replace("\ufeff", "").strip()
                 # Telegram'da komutlar / ile baslar; bircok kullanici "start" yazar — kabul et
                 tl = text.lower()
                 if tl in ("start", "help", "yardım", "yardim", "basla", "başla"):
                     text = "/start"
                 elif not text.startswith("/"):
-                    continue
+                    # Ozel sohbette metin varsa yardim goster (bot cevap vermiyor sanilmasin)
+                    if chat_type == "private" and text:
+                        text = "/start"
+                    else:
+                        continue
                 parts = text.split()
                 cmd = parts[0].split("@")[0].lower()
                 reply = ""
@@ -1561,6 +1570,19 @@ def run_telegram_command_loop(console: Console) -> None:
                 elif cmd == "/watch":
                     reply = "Kullanim: /watch hybrid"
                 elif cmd in ("/stop", "/quit"):
+                    reply = "Tamam, bot durduruluyor."
+                    if chat and reply:
+                        try:
+                            sm = _telegram_api_json(
+                                f"{base}/sendMessage",
+                                method="POST",
+                                json_body={"chat_id": chat, "text": reply[:4000]},
+                                timeout=15,
+                            )
+                            if not sm.get("ok"):
+                                console.print(f"[red]sendMessage: {sm.get('description', sm)}[/red]")
+                        except Exception as ex:
+                            console.print(f"[red]sendMessage HTTP: {ex}[/red]")
                     return
                 else:
                     reply = help_text
@@ -1580,6 +1602,11 @@ def run_telegram_command_loop(console: Console) -> None:
             return
         except Exception as e:
             console.print(f"[yellow]poll: {e}[/yellow]")
+            console.print(
+                "[yellow]Teshis:[/yellow] Ayni token ile baska polling süreci calisiyor olabilir "
+                "veya webhook tekrar aktiflesmis olabilir. "
+                "Gerekirse diger bot proseslerini durdurup tekrar deneyin."
+            )
             time.sleep(2)
 
 

@@ -278,6 +278,38 @@ Star 一下，下次需要的时候能找到。⭐
 
 ---
 
+## Telegram bot quick fix (/start veya start çalışmıyorsa)
+
+Aşağıdaki komutlardan **sadece birini** start komutu olarak çalıştırın:
+
+### Local
+```bash
+# Seçenek 1: standalone bot (en sade)
+python scripts/telegram_standalone_bot.py
+
+# Seçenek 2: crypto_signal içindeki telegram komut loop
+python scripts/crypto_signal.py telegram-bot
+```
+
+### Railway
+```bash
+# Seçenek 1
+pip install -r requirements-crypto-worker.txt && python scripts/telegram_standalone_bot.py
+
+# Seçenek 2
+pip install -r requirements-crypto-worker.txt && python scripts/crypto_signal.py telegram-bot
+```
+
+### Kritik notlar
+- Aynı `TELEGRAM_BOT_TOKEN` ile iki farklı yerde polling yapmayın (HTTP 409 alırsınız).
+- Bot’a özel sohbetten `start` veya `/start` yazın (ikisi de kabul edilir).
+- Webhook açıksa script otomatik kapatmayı dener; yine de çakışma varsa diğer çalışan bot sürecini durdurun.
+- Gerekirse debug için:
+```bash
+set TELEGRAM_DEBUG=1
+python scripts/telegram_standalone_bot.py
+```
+
 ## 常见问题 / FAQ
 
 <details>
