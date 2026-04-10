@@ -22,21 +22,9 @@ import json
 import os
 import sys
 import time
-from typing import Any
-
 import requests
 
 TIMEOUT = 30
-
-
-def _api(token: str, method: str, **params: Any) -> dict[str, Any]:
-    url = f"https://api.telegram.org/bot{token}/{method}"
-    if params.pop("_post", False):
-        r = requests.post(url, json=params.get("_json") or {}, timeout=TIMEOUT)
-    else:
-        r = requests.get(url, params=params or None, timeout=TIMEOUT)
-    r.raise_for_status()
-    return r.json()
 
 
 def main() -> None:
